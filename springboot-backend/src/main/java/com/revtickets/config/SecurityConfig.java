@@ -36,7 +36,9 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**", "/api/events/**", "/api/movies/**", 
                                 "/api/shows/**", "/api/travel/**", "/api/reviews/**",
                                 "/api/users/**", "/api/bookings/**", "/api/notifications/**",
-                                "/api/otp/**", "/api/payment/**", "/api/test-payment/**").permitAll()
+                                "/api/otp/**", "/api/payment/**", "/api/test-payment/**",
+                                "/api/theaters/**", "/api/seed",
+                                "/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**", "/swagger-resources/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .anyRequest().authenticated()
             )

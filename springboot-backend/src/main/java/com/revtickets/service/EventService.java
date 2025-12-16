@@ -17,6 +17,9 @@ public class EventService {
     @Autowired
     private com.revtickets.repository.ShowRepository showRepository;
     
+    @Autowired
+    private com.revtickets.repository.TheaterRepository theaterRepository;
+    
     public List<Event> getAllEvents() {
         return eventRepository.findAll();
     }
@@ -31,14 +34,71 @@ public class EventService {
     }
     
     public Event createEvent(Event event) {
-        return eventRepository.save(event);
+        Event savedEvent = eventRepository.save(event);
+        if ("movie".equals(event.getCategory()) || "concert".equals(event.getCategory())) {
+            createShowsForEvent(savedEvent);
+        }
+        return savedEvent;
+    }
+    
+    public void createShowsForEvent(Event event) {
+        List<com.revtickets.model.Theater> theaters = theaterRepository.findByIsActiveTrue();
+        if (theaters.isEmpty()) {
+            System.out.println("No active theaters found for event: " + event.getId());
+            return;
+        }
+        
+        System.out.println("Creating shows for event: " + event.getId() + " with " + theaters.size() + " theaters");
+        for (com.revtickets.model.Theater t : theaters) {
+            System.out.println("  - Theater: " + t.getName() + " (Active: " + t.getIsActive() + ")");
+        }
+        
+        String[] dates = {
+            java.time.LocalDate.now().plusDays(1).toString(),
+            java.time.LocalDate.now().plusDays(2).toString(),
+            java.time.LocalDate.now().plusDays(3).toString()
+        };
+        String[] times = {"5:00 PM", "7:00 PM", "9:00 PM"};
+        
+        List<com.revtickets.model.Show> shows = new java.util.ArrayList<>();
+        
+        for (String date : dates) {
+            for (String time : times) {
+                for (com.revtickets.model.Theater theater : theaters) {
+                    com.revtickets.model.Show show = new com.revtickets.model.Show();
+                    show.setEventId(event.getId());
+                    if ("movie".equals(event.getCategory())) {
+                        show.setMovieId(event.getId());
+                    }
+                    show.setShowDate(date);
+                    show.setShowTime(time);
+                    show.setTotalSeats(100);
+                    show.setAvailableSeats(100);
+                    show.setPrice(event.getPrice());
+                    show.setTheater(theater.getName());
+                    shows.add(show);
+                }
+            }
+        }
+        
+        if (!shows.isEmpty()) {
+            showRepository.saveAll(shows);
+            System.out.println("Created " + shows.size() + " shows for event: " + event.getId());
+        }
     }
     
     public Event updateEvent(Event event) {
         if (!eventRepository.existsById(event.getId())) {
             throw new EventNotFoundException("Event not found with id: " + event.getId());
         }
-        return eventRepository.save(event);
+        Event updatedEvent = eventRepository.save(event);
+        if (("movie".equals(event.getCategory()) || "concert".equals(event.getCategory()))) {
+            List<com.revtickets.model.Show> existingShows = showRepository.findByEventId(event.getId());
+            if (existingShows.isEmpty()) {
+                createShowsForEvent(updatedEvent);
+            }
+        }
+        return updatedEvent;
     }
     
     public void deleteEvent(Long id) {
@@ -49,9 +109,6 @@ public class EventService {
     }
     
     public List<Event> searchEvents(String query, String category) {
-        // JPA doesn't support easy dynamic queries like Mongo's stream for all fields easily without Specification
-        // But for simplicity we can just fetch all and filter in Java if dataset is small, or use custom queries repo methods
-        // Let's stick to Java filtering for now as it matches previous logic
         List<Event> events = category != null ? getEventsByCategory(category) : getAllEvents();
         return events.stream()
             .filter(event -> event.getTitle().toLowerCase().contains(query.toLowerCase()) ||
@@ -71,7 +128,6 @@ public class EventService {
         eventRepository.deleteAll();
         
         Event[] events = {
-            // Movies
             createMovieEvent("Inception", "A thief who steals corporate secrets through dream-sharing technology.",
                 "https://image.tmdb.org/t/p/w500/9gk7adHYeDvHkCSEqAvQNLV5Uge.jpg", 
                 8.8, "Sci-Fi, Thriller", 148, "2010-07-16", "English", 250.0),
@@ -88,7 +144,6 @@ public class EventService {
                 "https://image.tmdb.org/t/p/w500/66A9MqXOyVFCssoloscw79z8U0Y.jpg", 
                 8.4, "Comedy, Drama", 170, "2009-12-25", "Hindi", 220.0),
             
-            // Concerts
             createConcertEvent("Ed Sheeran World Tour", "Experience the magic of Ed Sheeran live in concert",
                 "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?w=300&h=400&fit=crop", 
                 9.2, Arrays.asList("Pop"), 1500.0),
@@ -96,7 +151,6 @@ public class EventService {
                 "https://images.unsplash.com/photo-1540039155733-5bb30b53aa14?w=300&h=400&fit=crop", 
                 9.5, Arrays.asList("Rock"), 2000.0),
             
-            // Events
             createOtherEvent("Tech Conference 2025", "Leading innovations & tech showcases", "Technology",
                 "https://images.unsplash.com/photo-1540575467063-178a50c2df87?w=400", 4.5, 799.0),
             createOtherEvent("Food Festival", "Taste cuisines from around the world", "Food & Beverage",
@@ -105,11 +159,13 @@ public class EventService {
         
         List<Event> savedEvents = eventRepository.saveAll(Arrays.asList(events));
         
-        // Seed Shows
+        seedTheaters();
+        
+        List<com.revtickets.model.Theater> theaters = theaterRepository.findByIsActiveTrue();
+        
         showRepository.deleteAll();
         List<com.revtickets.model.Show> shows = new java.util.ArrayList<>();
         
-        // Dates from "tomorrow"
         String[] dates = {
              java.time.LocalDate.now().plusDays(1).toString(),
              java.time.LocalDate.now().plusDays(2).toString(),
@@ -121,23 +177,75 @@ public class EventService {
             if ("concert".equals(event.getCategory()) || "movie".equals(event.getCategory())) {
                 for (String date : dates) {
                     for (String time : times) {
-                        com.revtickets.model.Show show = new com.revtickets.model.Show();
-                        show.setEventId(event.getId());
-                        if ("movie".equals(event.getCategory())) {
-                             show.setMovieId(event.getId());
+                        for (com.revtickets.model.Theater theater : theaters) {
+                            com.revtickets.model.Show show = new com.revtickets.model.Show();
+                            show.setEventId(event.getId());
+                            if ("movie".equals(event.getCategory())) {
+                                 show.setMovieId(event.getId());
+                            }
+                            show.setShowDate(date);
+                            show.setShowTime(time);
+                            show.setTotalSeats(100);
+                            show.setAvailableSeats(100);
+                            show.setPrice(event.getPrice());
+                            show.setTheater(theater.getName());
+                            shows.add(show);
                         }
-                        show.setShowDate(date);
-                        show.setShowTime(time);
-                        show.setTotalSeats(100);
-                        show.setAvailableSeats(100);
-                        show.setPrice(event.getPrice());
-                        show.setTheater("Main Hall");
-                        shows.add(show);
                     }
                 }
             }
         }
         showRepository.saveAll(shows);
+    }
+    
+    public void seedTheaters() {
+        String[][] theaterData = {
+            {"PVR Cinemas", "Mumbai", "Maharashtra"},
+            {"INOX", "Delhi", "Delhi"},
+            {"Cinepolis", "Bangalore", "Karnataka"},
+            {"Main Hall", "Hyderabad", "Telangana"},
+            {"IMAX Theater", "Chennai", "Tamil Nadu"},
+            {"Carnival Cinemas", "Pune", "Maharashtra"},
+            {"Miraj Cinemas", "Kolkata", "West Bengal"},
+            {"Asian Cinemas", "Ahmedabad", "Gujarat"},
+            {"Fun Cinemas", "Jaipur", "Rajasthan"},
+            {"SPI Cinemas", "Coimbatore", "Tamil Nadu"},
+            {"Wave Cinemas", "Lucknow", "Uttar Pradesh"},
+            {"Mukta A2 Cinemas", "Nagpur", "Maharashtra"},
+            {"PVR ICON", "Gurgaon", "Haryana"},
+            {"CineMAX", "Chandigarh", "Punjab"},
+            {"MovieMax", "Indore", "Madhya Pradesh"},
+            {"Rajhans Cinemas", "Surat", "Gujarat"},
+            {"City Pride", "Nashik", "Maharashtra"},
+            {"Gold Cinemas", "Vadodara", "Gujarat"},
+            {"Big Cinemas", "Bhopal", "Madhya Pradesh"},
+            {"Sathyam Cinemas", "Vijayawada", "Andhra Pradesh"}
+        };
+        
+        List<com.revtickets.model.Theater> theatersToSave = new java.util.ArrayList<>();
+        for (String[] data : theaterData) {
+            java.util.Optional<com.revtickets.model.Theater> existing = theaterRepository.findByName(data[0]);
+            if (existing.isPresent()) {
+                com.revtickets.model.Theater theater = existing.get();
+                theater.setCity(data[1]);
+                theater.setState(data[2]);
+                theater.setLocation(data[1] + ", " + data[2]);
+                theater.setIsActive(true);
+                theatersToSave.add(theater);
+            } else {
+                com.revtickets.model.Theater theater = new com.revtickets.model.Theater();
+                theater.setName(data[0]);
+                theater.setCity(data[1]);
+                theater.setState(data[2]);
+                theater.setLocation(data[1] + ", " + data[2]);
+                theater.setTotalScreens(4 + (int)(Math.random() * 4));
+                theater.setIsActive(true);
+                theatersToSave.add(theater);
+            }
+        }
+        
+        theaterRepository.saveAll(theatersToSave);
+        System.out.println("Seeded/Updated " + theatersToSave.size() + " theaters in database");
     }
     
     private Event createMovieEvent(String title, String description, String imageUrl, 

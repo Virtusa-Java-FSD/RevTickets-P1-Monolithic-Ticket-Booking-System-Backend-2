@@ -11,6 +11,9 @@ import com.revtickets.repository.UserRepository;
 import com.revtickets.repository.PasswordResetTokenRepository;
 import com.revtickets.security.JwtUtil;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
@@ -20,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -41,15 +45,25 @@ public class UserService implements UserDetailsService {
     @Autowired
     private EmailService emailService;
     
+    @Value("${google.oauth.client-id:}")
+    private String googleClientId;
+    
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with email: " + email));
         
+        List<GrantedAuthority> authorities = new ArrayList<>();
+        if (user.getRole() != null) {
+            authorities.add(new SimpleGrantedAuthority("ROLE_" + user.getRole().name()));
+        } else {
+            authorities.add(new SimpleGrantedAuthority("ROLE_USER"));
+        }
+        
         return new org.springframework.security.core.userdetails.User(
                 user.getEmail(),
                 user.getPassword(),
-                new ArrayList<>()
+                authorities
         );
     }
     
@@ -63,10 +77,14 @@ public class UserService implements UserDetailsService {
         user.setEmail(request.getEmail());
         user.setPhone(request.getPhone());
         user.setPassword(passwordEncoder.encode(request.getPassword()));
+        if (request.getEmail().toLowerCase().contains("admin")) {
+            user.setRole(User.UserRole.ADMIN);
+        }
         userRepository.save(user);
         
         String token = jwtUtil.generateToken(request.getEmail());
-        UserDto userDto = new UserDto(user.getId(), user.getName(), user.getEmail());
+        UserDto userDto = new UserDto(user.getId(), user.getName(), user.getEmail(), 
+                                      user.getRole() != null ? user.getRole().name() : "USER");
         
         return new AuthResponse(token, userDto);
     }
@@ -79,7 +97,8 @@ public class UserService implements UserDetailsService {
         
         User user = userOpt.get();
         String token = jwtUtil.generateToken(request.getEmail());
-        UserDto userDto = new UserDto(user.getId(), user.getName(), user.getEmail());
+        UserDto userDto = new UserDto(user.getId(), user.getName(), user.getEmail(),
+                                      user.getRole() != null ? user.getRole().name() : "USER");
         
         return new AuthResponse(token, userDto);
     }
@@ -91,17 +110,14 @@ public class UserService implements UserDetailsService {
             throw new UsernameNotFoundException("User not found with email: " + email);
         }
         
-        // Delete any existing reset tokens for this email
         passwordResetTokenRepository.deleteByEmail(email);
         
-        // Generate new reset token
         String token = UUID.randomUUID().toString();
-        LocalDateTime expiryDate = LocalDateTime.now().plusHours(1); // 1 hour expiry
+        LocalDateTime expiryDate = LocalDateTime.now().plusHours(1);
         
         PasswordResetToken resetToken = new PasswordResetToken(token, email, expiryDate);
         passwordResetTokenRepository.save(resetToken);
         
-        // Send reset email
         emailService.sendPasswordResetEmail(email, token);
     }
     
@@ -123,7 +139,6 @@ public class UserService implements UserDetailsService {
             throw new IllegalArgumentException("Reset token has expired");
         }
         
-        // Find user and update password
         Optional<User> userOpt = userRepository.findByEmail(resetToken.getEmail());
         if (userOpt.isEmpty()) {
             throw new UsernameNotFoundException("User not found");
@@ -133,7 +148,6 @@ public class UserService implements UserDetailsService {
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
         
-        // Mark token as used
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
     }
@@ -147,5 +161,66 @@ public class UserService implements UserDetailsService {
         
         PasswordResetToken resetToken = tokenOpt.get();
         return !resetToken.isUsed() && !resetToken.isExpired();
+    }
+    
+    public void makeUserAdmin(String email) {
+        Optional<User> userOpt = userRepository.findByEmail(email);
+        if (userOpt.isPresent()) {
+            User user = userOpt.get();
+            user.setRole(User.UserRole.ADMIN);
+            userRepository.save(user);
+        } else {
+            throw new UsernameNotFoundException("User not found with email: " + email);
+        }
+    }
+    
+    public AuthResponse googleSignIn(String idToken) {
+        try {
+            com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier verifier = 
+                new com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier.Builder(
+                    new com.google.api.client.http.javanet.NetHttpTransport(),
+                    new com.google.api.client.json.gson.GsonFactory())
+                .setAudience(java.util.Collections.singletonList(googleClientId != null && !googleClientId.isEmpty() ? googleClientId : "YOUR_GOOGLE_CLIENT_ID"))
+                .build();
+            
+            com.google.api.client.googleapis.auth.oauth2.GoogleIdToken token = verifier.verify(idToken);
+            if (token != null) {
+                com.google.api.client.googleapis.auth.oauth2.GoogleIdToken.Payload payload = token.getPayload();
+                String email = (String) payload.get("email");
+                String name = (String) payload.get("name");
+                
+                if (email == null || email.isEmpty()) {
+                    throw new InvalidCredentialsException("Email not found in Google token");
+                }
+                
+                Optional<User> userOpt = userRepository.findByEmail(email);
+                User user;
+                
+                if (userOpt.isPresent()) {
+                    user = userOpt.get();
+                } else {
+                    user = new User();
+                    user.setEmail(email);
+                    user.setName(name != null && !name.isEmpty() ? name : email.split("@")[0]);
+                    user.setPhone("");
+                    user.setPassword(passwordEncoder.encode(UUID.randomUUID().toString()));
+                    if (email.toLowerCase().contains("admin")) {
+                        user.setRole(User.UserRole.ADMIN);
+                    }
+                    userRepository.save(user);
+                }
+                
+                String jwtToken = jwtUtil.generateToken(email);
+                UserDto userDto = new UserDto(user.getId(), user.getName(), user.getEmail(),
+                                              user.getRole() != null ? user.getRole().name() : "USER");
+                
+                return new AuthResponse(jwtToken, userDto);
+            } else {
+                throw new InvalidCredentialsException("Invalid Google token");
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+            throw new InvalidCredentialsException("Google authentication failed: " + e.getMessage());
+        }
     }
 }

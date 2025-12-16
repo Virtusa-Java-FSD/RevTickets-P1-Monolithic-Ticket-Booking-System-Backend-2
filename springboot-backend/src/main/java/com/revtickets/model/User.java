@@ -22,4 +22,11 @@ public class User {
     
     private String phone;
     private String password;
+    
+    @Enumerated(EnumType.STRING)
+    private UserRole role = UserRole.USER;
+    
+    public enum UserRole {
+        USER, ADMIN
+    }
 }
