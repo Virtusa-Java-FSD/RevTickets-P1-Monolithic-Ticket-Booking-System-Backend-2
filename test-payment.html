@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Payment</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+    <button onclick="pay()">Pay ₹100</button>
+    <div id="result"></div>
+
+    <script>
+        async function pay() {
+            // 1. Create order
+            const order = await fetch('http://localhost:8080/api/payment/create-order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({amount: 100})
+            }).then(r => r.json());
+
+            // 2. Open Razorpay
+            new Razorpay({
+                key: order.keyId,
+                order_id: order.orderId,
+                amount: order.amount,
+                handler: async (response) => {
+                    // 3. Verify payment
+                    await fetch('http://localhost:8080/api/payment/verify', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(response)
+                    });
+
+                    // 4. Create booking
+                    const booking = await fetch('http://localhost:8080/api/bookings', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({
+                            showId: 1,
+                            seats: ['A1'],
+                            totalPrice: 100,
+                            paymentId: response.razorpay_payment_id
+                        })
+                    }).then(r => r.json());
+
+                    document.getElementById('result').innerHTML = 
+                        `✅ Payment Success!<br>Booking ID: ${booking.id}`;
+                }
+            }).open();
+        }
+    </script>
+</body>
+</html>

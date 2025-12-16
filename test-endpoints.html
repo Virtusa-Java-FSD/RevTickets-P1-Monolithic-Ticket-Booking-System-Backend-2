@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Payment Endpoints</title>
+    <style>
+        button { margin: 5px; padding: 10px; }
+        .result { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h2>Payment Endpoints Test</h2>
+    
+    <button onclick="createOrder()">1. Create Order</button>
+    <button onclick="verifyPayment()">2. Verify Payment</button>
+    <button onclick="recordSuccess()">3. Record Success</button>
+    <button onclick="createBooking()">4. Create Booking</button>
+    <button onclick="getAllPayments()">5. Get All Payments</button>
+    <button onclick="getPaymentStatus()">6. Get Payment Status</button>
+    
+    <div id="result" class="result"></div>
+
+    <script>
+        let orderId = '';
+        let paymentId = 'pay_test123';
+        
+        async function createOrder() {
+            const response = await fetch('http://localhost:8080/api/payment/create-order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({amount: 100})
+            });
+            const data = await response.json();
+            orderId = data.orderId;
+            showResult('Create Order', data);
+        }
+
+        async function verifyPayment() {
+            const response = await fetch('http://localhost:8080/api/payment/verify', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    razorpay_order_id: orderId,
+                    razorpay_payment_id: paymentId,
+                    razorpay_signature: 'test_signature'
+                })
+            });
+            const data = await response.json();
+            showResult('Verify Payment', data);
+        }
+
+        async function recordSuccess() {
+            const response = await fetch('http://localhost:8080/api/payment/success', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    paymentId: paymentId,
+                    orderId: orderId,
+                    amount: 100
+                })
+            });
+            const data = await response.json();
+            showResult('Record Success', data);
+        }
+
+        async function createBooking() {
+            const response = await fetch('http://localhost:8080/api/bookings', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    showId: 1,
+                    seats: ['A1', 'A2'],
+                    totalPrice: 100,
+                    paymentId: paymentId
+                })
+            });
+            const data = await response.json();
+            showResult('Create Booking', data);
+        }
+
+        async function getAllPayments() {
+            const response = await fetch('http://localhost:8080/api/payment/all');
+            const data = await response.json();
+            showResult('All Payments', data);
+        }
+
+        async function getPaymentStatus() {
+            const response = await fetch(`http://localhost:8080/api/payment/status/${paymentId}`);
+            const data = await response.json();
+            showResult('Payment Status', data);
+        }
+
+        function showResult(title, data) {
+            document.getElementById('result').innerHTML = 
+                `<h3>${title}</h3><pre>${JSON.stringify(data, null, 2)}</pre>`;
+        }
+    </script>
+</body>
+</html>

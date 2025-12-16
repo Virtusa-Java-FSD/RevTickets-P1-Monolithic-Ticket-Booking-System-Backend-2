@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payment Integration Example</title>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+</head>
+<body>
+    <h1>Payment Integration Test</h1>
+    
+    <div style="margin: 20px;">
+        <h3>Test Payment Flow</h3>
+        <p>Amount: ₹<span id="amount">300</span></p>
+        <button onclick="initiatePayment()" id="payBtn">Pay Now</button>
+    </div>
+
+    <div id="status" style="margin: 20px; padding: 10px; border: 1px solid #ddd;"></div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api';
+        
+        async function initiatePayment() {
+            const amount = 300; // Amount in rupees
+            
+            try {
+                // Step 1: Create order
+                const orderResponse = await fetch(`${API_BASE}/payment/create-order`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ amount: amount })
+                });
+                
+                const orderData = await orderResponse.json();
+                console.log('Order created:', orderData);
+                
+                // Step 2: Open Razorpay checkout
+                const options = {
+                    key: orderData.keyId,
+                    amount: orderData.amount,
+                    currency: orderData.currency,
+                    order_id: orderData.orderId,
+                    name: 'RevTickets',
+                    description: 'Ticket Booking Payment',
+                    handler: async function(response) {
+                        // Step 3: Verify payment
+                        await verifyPayment(response);
+                    },
+                    prefill: {
+                        name: 'Test User',
+                        email: 'test@example.com',
+                        contact: '9999999999'
+                    }
+                };
+                
+                const rzp = new Razorpay(options);
+                rzp.open();
+                
+            } catch (error) {
+                console.error('Payment initiation failed:', error);
+                updateStatus('Payment initiation failed: ' + error.message, 'error');
+            }
+        }
+        
+        async function verifyPayment(response) {
+            try {
+                updateStatus('Verifying payment...', 'info');
+                
+                // Step 1: Verify with backend
+                const verifyResponse = await fetch(`${API_BASE}/payment/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        razorpay_order_id: response.razorpay_order_id,
+                        razorpay_payment_id: response.razorpay_payment_id,
+                        razorpay_signature: response.razorpay_signature
+                    })
+                });
+                
+                const verifyData = await verifyResponse.json();
+                console.log('Payment verification:', verifyData);
+                
+                if (verifyData.status === 'success') {
+                    // Step 2: Record payment success
+                    await recordPaymentSuccess({
+                        paymentId: response.razorpay_payment_id,
+                        orderId: response.razorpay_order_id,
+                        amount: 300
+                    });
+                    
+                    // Step 3: Create booking with payment info
+                    await createBookingWithPayment(response.razorpay_payment_id);
+                    
+                    updateStatus('Payment successful! Booking created.', 'success');
+                } else {
+                    updateStatus('Payment verification failed', 'error');
+                }
+                
+            } catch (error) {
+                console.error('Payment verification failed:', error);
+                updateStatus('Payment verification failed: ' + error.message, 'error');
+            }
+        }
+        
+        async function recordPaymentSuccess(paymentData) {
+            try {
+                const response = await fetch(`${API_BASE}/payment/success`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(paymentData)
+                });
+                
+                const result = await response.json();
+                console.log('Payment success recorded:', result);
+                
+            } catch (error) {
+                console.error('Failed to record payment success:', error);
+            }
+        }
+        
+        async function createBookingWithPayment(paymentId) {
+            try {
+                const bookingData = {
+                    showId: 1, // Mock show ID
+                    seats: ['A1', 'A2'],
+                    totalPrice: 300,
+                    userId: 1, // Mock user ID
+                    paymentId: paymentId
+                };
+                
+                const response = await fetch(`${API_BASE}/bookings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bookingData)
+                });
+                
+                if (response.ok) {
+                    const booking = await response.json();
+                    console.log('Booking created:', booking);
+                } else {
+                    const error = await response.json();
+                    console.error('Booking failed:', error);
+                }
+                
+            } catch (error) {
+                console.error('Booking creation failed:', error);
+            }
+        }
+        
+        function updateStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = message;
+            statusDiv.className = type;
+            
+            // Add some basic styling
+            if (type === 'success') {
+                statusDiv.style.backgroundColor = '#d4edda';
+                statusDiv.style.color = '#155724';
+            } else if (type === 'error') {
+                statusDiv.style.backgroundColor = '#f8d7da';
+                statusDiv.style.color = '#721c24';
+            } else {
+                statusDiv.style.backgroundColor = '#d1ecf1';
+                statusDiv.style.color = '#0c5460';
+            }
+        }
+    </script>
+</body>
+</html>

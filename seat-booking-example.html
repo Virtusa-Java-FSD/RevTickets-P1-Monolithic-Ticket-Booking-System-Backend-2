@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Seat Booking Example</title>
+    <style>
+        .seat-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 50px);
+            gap: 10px;
+            margin: 20px;
+        }
+        .seat {
+            width: 50px;
+            height: 50px;
+            border: 2px solid #ccc;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .seat.available {
+            background-color: #e8f5e8;
+            border-color: #4caf50;
+        }
+        .seat.selected {
+            background-color: #2196f3;
+            color: white;
+            border-color: #1976d2;
+        }
+        .seat.booked {
+            background-color: #ffcdd2;
+            border-color: #f44336;
+            cursor: not-allowed;
+        }
+        .booking-info {
+            margin: 20px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Movie Seat Booking</h1>
+    
+    <div class="booking-info">
+        <h3>Show Information</h3>
+        <p>Show ID: <span id="showId">1</span></p>
+        <p>Available Seats: <span id="availableSeats">-</span></p>
+        <p>Selected Seats: <span id="selectedSeats">None</span></p>
+        <p>Total Price: ₹<span id="totalPrice">0</span></p>
+    </div>
+
+    <div class="seat-grid" id="seatGrid">
+        <!-- Seats will be generated here -->
+    </div>
+
+    <div style="margin: 20px;">
+        <button onclick="loadSeatStatus()" style="margin-right: 10px;">Refresh Seats</button>
+        <button onclick="bookSelectedSeats()" id="bookBtn" disabled>Book Selected Seats</button>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8080/api';
+        let selectedSeats = [];
+        let bookedSeats = [];
+        let showData = {};
+
+        // Generate seat layout (2 decks, 9 rows, 4 seats per row)
+        function generateSeatLayout() {
+            const seatGrid = document.getElementById('seatGrid');
+            seatGrid.innerHTML = '';
+            
+            // Lower Deck (A-D, rows 1-9)
+            for (let row = 1; row <= 9; row++) {
+                ['A', 'B', 'C', 'D'].forEach(letter => {
+                    const seatNumber = `${letter}${row}`;
+                    const seatElement = createSeatElement(seatNumber);
+                    seatGrid.appendChild(seatElement);
+                });
+            }
+        }
+
+        function createSeatElement(seatNumber) {
+            const seat = document.createElement('div');
+            seat.className = 'seat available';
+            seat.textContent = seatNumber;
+            seat.onclick = () => toggleSeat(seatNumber, seat);
+            return seat;
+        }
+
+        function toggleSeat(seatNumber, seatElement) {
+            if (bookedSeats.includes(seatNumber)) {
+                return; // Can't select booked seats
+            }
+
+            if (selectedSeats.includes(seatNumber)) {
+                // Deselect
+                selectedSeats = selectedSeats.filter(s => s !== seatNumber);
+                seatElement.className = 'seat available';
+            } else {
+                // Select
+                selectedSeats.push(seatNumber);
+                seatElement.className = 'seat selected';
+            }
+
+            updateBookingInfo();
+        }
+
+        function updateBookingInfo() {
+            document.getElementById('selectedSeats').textContent = 
+                selectedSeats.length > 0 ? selectedSeats.join(', ') : 'None';
+            
+            const price = selectedSeats.length * (showData.price || 150);
+            document.getElementById('totalPrice').textContent = price;
+            
+            document.getElementById('bookBtn').disabled = selectedSeats.length === 0;
+        }
+
+        async function loadSeatStatus() {
+            const showId = document.getElementById('showId').textContent;
+            
+            try {
+                const response = await fetch(`${API_BASE}/shows/${showId}/seat-status`);
+                const data = await response.json();
+                
+                showData = data;
+                bookedSeats = data.bookedSeats || [];
+                
+                document.getElementById('availableSeats').textContent = data.availableSeats;
+                
+                // Update seat display
+                updateSeatDisplay();
+                
+            } catch (error) {
+                console.error('Error loading seat status:', error);
+                alert('Failed to load seat status');
+            }
+        }
+
+        function updateSeatDisplay() {
+            const seats = document.querySelectorAll('.seat');
+            seats.forEach(seat => {
+                const seatNumber = seat.textContent;
+                
+                if (bookedSeats.includes(seatNumber)) {
+                    seat.className = 'seat booked';
+                } else if (selectedSeats.includes(seatNumber)) {
+                    seat.className = 'seat selected';
+                } else {
+                    seat.className = 'seat available';
+                }
+            });
+        }
+
+        async function bookSelectedSeats() {
+            if (selectedSeats.length === 0) return;
+
+            const showId = document.getElementById('showId').textContent;
+            
+            // First check if seats are still available
+            try {
+                const checkResponse = await fetch(`${API_BASE}/shows/${showId}/check-seats`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(selectedSeats)
+                });
+                
+                const checkData = await checkResponse.json();
+                
+                if (!checkData.available) {
+                    alert(`Some seats are no longer available: ${checkData.unavailableSeats.join(', ')}`);
+                    loadSeatStatus(); // Refresh seat status
+                    return;
+                }
+
+                // Proceed with booking
+                const bookingData = {
+                    showId: parseInt(showId),
+                    seats: selectedSeats,
+                    totalPrice: selectedSeats.length * (showData.price || 150),
+                    userId: 1 // Mock user ID
+                };
+
+                const bookingResponse = await fetch(`${API_BASE}/bookings`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(bookingData)
+                });
+
+                if (bookingResponse.ok) {
+                    const booking = await bookingResponse.json();
+                    alert(`Booking successful! Booking ID: ${booking.id}`);
+                    
+                    // Reset selection and refresh
+                    selectedSeats = [];
+                    updateBookingInfo();
+                    loadSeatStatus();
+                } else {
+                    const error = await bookingResponse.json();
+                    alert(`Booking failed: ${error.error || 'Unknown error'}`);
+                }
+
+            } catch (error) {
+                console.error('Error booking seats:', error);
+                alert('Failed to book seats');
+            }
+        }
+
+        // Initialize
+        generateSeatLayout();
+        loadSeatStatus();
+    </script>
+</body>
+</html>
